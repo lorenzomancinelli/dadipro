@@ -515,9 +515,9 @@ def new_die_id():
 # "=" e ")" sono sempre disponibili in numero abbondante (nel gioco originale
 # sono pezzi "gratuiti", illimitati): qui ne generiamo diversi per round cosi'
 # che piu' giocatori possano comporre la propria uguaglianza in parallelo.
-EXTRA_EQUALS_PER_ROUND = 6
-EXTRA_CLOSEPAREN_PER_ROUND = 6
-POOL_SAMPLE_SIZE = 30  # quante tessere pescate dal sacchetto si vedono a schermo ogni round
+EXTRA_EQUALS_PER_ROUND = 4
+EXTRA_CLOSEPAREN_PER_ROUND = 4
+POOL_SAMPLE_SIZE = 30  # non piu' usato dalla logica attuale di roll_full_set, lasciato per riferimento
 
 def build_full_bag_templates():
     """Ricostruisce l'intero sacchetto di Pytagora Pro (226 tessere pescabili,
@@ -569,12 +569,49 @@ def make_tile(tpl):
     return t
 
 def roll_full_set():
-    pool = random.sample(FULL_BAG_TEMPLATES, min(POOL_SAMPLE_SIZE, len(FULL_BAG_TEMPLATES)))
-    dice = [make_tile(t) for t in pool]
+    """4 numeri pari + 4 dispari + 4 operatori + 1 parentesi aperta (logica
+    originale di Rolling Cubes), poi altre 5 tessere pescate tra radici,
+    frazioni e virgole. '=' e ')' restano sempre disponibili e illimitati,
+    come nel Pytagora Pro da tavolo."""
+    dice = []
+
+    for _ in range(4):
+        v = random.choice([0,2,4,6,8])
+        dice.append(make_tile({"cat":"digit", "display":str(v), "value":v}))
+    for _ in range(4):
+        v = random.choice([1,3,5,7,9])
+        dice.append(make_tile({"cat":"digit", "display":str(v), "value":v}))
+
+    OP_TEMPLATES = [
+        {"cat":"addsub", "display":"+", "op":"+"},
+        {"cat":"addsub", "display":"\u2212", "op":"-"},
+        {"cat":"muldiv", "display":"\u00d7", "op":"*"},
+        {"cat":"muldiv", "display":"\u00f7", "op":"/"},
+    ]
+    for _ in range(4):
+        dice.append(make_tile(random.choice(OP_TEMPLATES)))
+
+    dice.append(make_tile({"cat":"paren", "display":"(", "side":"open"}))
+
+    ROOT_TEMPLATES = [
+        {"cat":"advop", "display":"\u221a", "kind":"sqrt"},
+        {"cat":"advop", "display":"\u221b", "kind":"cbrt"},
+        {"cat":"advop", "display":"\u221c", "kind":"root4"},
+    ]
+    FRAC_TEMPLATES = [
+        {"cat":"fracnum", "display":f"{n}/{d}", "value":n/d, "num":n, "den":d}
+        for (n,d) in [(1,2),(1,3),(1,4),(2,3),(3,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)]
+    ]
+    COMMA_TEMPLATE = {"cat":"decsym", "display":",", "kind":"comma"}
+    ADVANCED_TEMPLATES = ROOT_TEMPLATES + FRAC_TEMPLATES + [COMMA_TEMPLATE]
+    for _ in range(5):
+        dice.append(make_tile(random.choice(ADVANCED_TEMPLATES)))
+
     for _ in range(EXTRA_EQUALS_PER_ROUND):
         dice.append(make_tile({"cat":"equals", "display":"="}))
     for _ in range(EXTRA_CLOSEPAREN_PER_ROUND):
         dice.append(make_tile({"cat":"paren", "display":")", "side":"close"}))
+
     random.shuffle(dice)
     return dice
 
