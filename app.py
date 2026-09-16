@@ -2,6 +2,7 @@ import os
 import json
 import random
 import re
+import uuid
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, render_template_string
 
@@ -206,6 +207,11 @@ button:active { transform:translateY(1px); }
   <section class="dice-area">
     <h2>Dadi (clicca per spostare nei tuoi slot / rimuovere)</h2>
     <div id="dice-pool" class="dice-pool" aria-live="polite"></div>
+    <h3 style="margin-top:14px;">Sempre disponibili</h3>
+    <div id="free-tiles" class="dice-pool">
+      <div class="die equals" id="free-equals" draggable="true" title="Sempre disponibile, non si esaurisce mai">=</div>
+      <div class="die paren" id="free-closeparen" draggable="true" title="Sempre disponibile, non si esaurisce mai">)</div>
+    </div>
   </section>
 
   <section class="slots-area">
@@ -408,6 +414,31 @@ async function renderState(state) {
       poolDiv.appendChild(el);
     }
   });
+
+  // --- tessere "sempre disponibili" gia' piazzate in uno slot (non stanno nel dice_pool) ---
+  mySlots.forEach((ref, idx) => {
+    if (!ref) return;
+    const s = slotsDiv.children[idx];
+    if (!s || s.children.length > 0) return; // gia' renderizzata sopra (era una tessera del sacchetto)
+    let cls = null, label = null;
+    if (ref.startsWith('free_eq_')) { cls = 'equals'; label = '='; }
+    else if (ref.startsWith('free_cp_')) { cls = 'paren'; label = ')'; }
+    if (!cls) return;
+    const el = document.createElement('div');
+    el.className = 'die ' + cls;
+    el.textContent = label;
+    el.dataset.id = ref;
+    el.setAttribute('draggable', 'true');
+    el.addEventListener('dragstart', (ev) => { ev.dataTransfer.setData('text/plain', ref); });
+    el.addEventListener('click', async () => {
+      if (state.winner) return;
+      await apiPost('/api/remove', { die_id: ref });
+      const st = await apiGet('/api/state');
+      renderState(st);
+    });
+    s.appendChild(el);
+    s.classList.add('filled');
+  });
 }
 
 
@@ -434,6 +465,21 @@ document.getElementById('btn-verify').addEventListener('click', async () => {
 document.getElementById('btn-reset').addEventListener('click', async () => {
   renderState(await apiPost('/api/reset_game'));
 });
+
+// --- tessere "sempre disponibili" (= e )): click per piazzarle nel primo slot libero, oppure trascinale ---
+function wireFreeTile(elId, sentinel) {
+  const el = document.getElementById(elId);
+  el.addEventListener('click', async () => {
+    await apiPost('/api/place', { die_id: sentinel });
+    const st = await apiGet('/api/state');
+    renderState(st);
+  });
+  el.addEventListener('dragstart', (ev) => {
+    ev.dataTransfer.setData('text/plain', sentinel);
+  });
+}
+wireFreeTile('free-equals', 'FREE_EQUALS');
+wireFreeTile('free-closeparen', 'FREE_CLOSEPAREN');
 
 // imposta punteggio vittoria
 victorySel.addEventListener('change', async () => {
@@ -607,10 +653,9 @@ def roll_full_set():
     for _ in range(5):
         dice.append(make_tile(random.choice(ADVANCED_TEMPLATES)))
 
-    for _ in range(EXTRA_EQUALS_PER_ROUND):
-        dice.append(make_tile({"cat":"equals", "display":"="}))
-    for _ in range(EXTRA_CLOSEPAREN_PER_ROUND):
-        dice.append(make_tile({"cat":"paren", "display":")", "side":"close"}))
+    # NB: "=" e ")" non fanno piu' parte del sacchetto pescato: sono sempre
+    # disponibili a parte (vedi le due tessere fisse "sempre disponibili"
+    # nell'interfaccia, gestite da FREE_EQUALS / FREE_CLOSEPAREN).
 
     random.shuffle(dice)
     return dice
@@ -620,15 +665,29 @@ def roll_full_set():
 # aritmetico, alla validita' e al punteggio (stesse regole della versione
 # digitale di Pytagora Pro).
 # ============================================================================
+FREE_EQUALS_PREFIX = "free_eq_"
+FREE_CLOSEPAREN_PREFIX = "free_cp_"
+
+def is_free_ref(ref):
+    return isinstance(ref, str) and (ref.startswith(FREE_EQUALS_PREFIX) or ref.startswith(FREE_CLOSEPAREN_PREFIX))
+
+def resolve_one(ref, by_id):
+    if ref.startswith(FREE_EQUALS_PREFIX):
+        return {"cat":"equals", "display":"="}
+    if ref.startswith(FREE_CLOSEPAREN_PREFIX):
+        return {"cat":"paren", "display":")", "side":"close"}
+    return by_id.get(ref)
+
 def resolve_slot_sequence(dice_pool, slots_list):
     """Dagli id negli slot (in ordine) alla lista di tessere (dict) posizionate,
-    saltando gli slot vuoti."""
+    saltando gli slot vuoti. Gestisce sia le tessere pescate dal sacchetto sia
+    quelle "sempre disponibili" (=, ))."""
     by_id = {d["id"]: d for d in dice_pool}
     seq = []
     for ref in slots_list:
         if ref is None:
             continue
-        tile = by_id.get(ref)
+        tile = resolve_one(ref, by_id)
         if tile:
             seq.append(tile)
     return seq
@@ -988,11 +1047,21 @@ def api_place():
     if player not in state.get('players', []):
         return jsonify({"error": "Player non registrato"}), 400
 
-    valid_ids = {d["id"] for d in state.get("dice_pool", [])}
-    if die_id not in valid_ids:
-        return jsonify({"error": "Dado non trovato"}), 404
-
     pslots = state.setdefault('personal_slots', {}).setdefault(player, [None]*13)
+
+    # tessere "sempre disponibili": ogni richiesta ne conia una copia nuova,
+    # non si esauriscono mai. die_id speciale in arrivo dal frontend:
+    # "FREE_EQUALS" oppure "FREE_CLOSEPAREN".
+    if die_id in ("FREE_EQUALS", "FREE_CLOSEPAREN"):
+        prefix = FREE_EQUALS_PREFIX if die_id == "FREE_EQUALS" else FREE_CLOSEPAREN_PREFIX
+        die_id = prefix + uuid.uuid4().hex[:10]
+    elif is_free_ref(die_id):
+        pass  # e' una tessera "sempre disponibile" gia' piazzata: la stiamo solo spostando di slot
+    else:
+        valid_ids = {d["id"] for d in state.get("dice_pool", [])}
+        if die_id not in valid_ids:
+            return jsonify({"error": "Dado non trovato"}), 404
+
     if die_id in pslots:
         return jsonify({"error": "Dado già piazzato nei tuoi slot", "state": state}), 400
 
