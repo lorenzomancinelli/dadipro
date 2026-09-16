@@ -229,7 +229,7 @@ button:active { transform:translateY(1px); }
     <ul>
       <li>Cifre: punteggio posizionale (unità 1, decine 2, centinaia 3, ...).</li>
       <li>Virgola decimale e simbolo di periodo: +1 ciascuno.</li>
-      <li>Frazioni (es. 1/2): +1.</li>
+      <li>Frazioni (es. 1/2): valgono come una divisione — 3 punti, ridotti a 1 se numeratore o denominatore è 1, o se sono uguali (es. 4/4).</li>
       <li>Parentesi aperta: +1 (la parentesi chiusa non dà punti, sempre disponibile).</li>
       <li>+ e −: +1. × e ÷: +2/+3, ridotti a +1 se uno degli operandi è 1 o è una divisione per sé stesso.</li>
       <li>Radice quadrata/cubica/quarta e potenza²/³/⁴: +1 se l'argomento vale 1, altrimenti +2.</li>
@@ -382,7 +382,7 @@ async function renderState(state) {
   (state.dice_pool || []).forEach(d => {
     const el = document.createElement('div');
     el.className = 'die ' + d.type;
-    el.textContent = d.value;
+    el.textContent = d.display;
     el.dataset.id = d.id;
 
     // click toggle
@@ -611,7 +611,9 @@ def make_tile(tpl):
     t = dict(tpl)
     t["id"] = new_die_id()
     t["type"] = t["cat"]      # il frontend usa "type" per la classe CSS
-    t["value"] = t.get("display")  # il frontend mostra "value" come testo della tessera
+    # NB: NON sovrascrivere "value": per cifre e frazioni deve restare il
+    # valore numerico vero (serve al motore di calcolo). Il testo mostrato
+    # a schermo e' sempre "display" (letto dal frontend).
     return t
 
 def roll_full_set():
@@ -727,7 +729,7 @@ def build_atoms_for_side(tiles):
                 num_buf["period"] = True
         elif cat == "fracnum":
             flush()
-            atoms.append({"type":"num", "is_frac":True, "value":t["value"], "display":t["display"]})
+            atoms.append({"type":"num", "is_frac":True, "value":t["value"], "display":t["display"], "num":t.get("num"), "den":t.get("den")})
         elif cat in ("addsub", "muldiv"):
             flush()
             atoms.append({"type":"op", "op":t["op"], "tile":t})
@@ -818,7 +820,10 @@ def parse_side(atoms):
         while peek() and peek()["type"]=="op" and peek()["op"] in ("*","/"):
             optok = peek(); pos[0]+=1
             right = postfix_level()
-            v = node["value"]*right["value"] if optok["op"]=="*" else node["value"]/right["value"]
+            if optok["op"] == "*":
+                v = node["value"]*right["value"]
+            else:
+                v = (node["value"]/right["value"]) if right["value"] != 0 else float("inf")
             node = {"kind":"binop", "value":v, "op":optok["op"], "left":node, "right":right, "tile":optok["tile"]}
         return node
     def expr():
@@ -882,8 +887,12 @@ def score_points(node, breakdown):
         k = nd["kind"]
         if k == "num":
             if nd["atom"].get("is_frac"):
-                pts += 1
-                breakdown.append({"label": f"frazione '{nd['atom']['display']}'", "pts":1})
+                num = nd["atom"].get("num")
+                den = nd["atom"].get("den")
+                trivial = (num == 1) or (den == 1) or (num == den)
+                val = 1 if trivial else 3
+                pts += val
+                breakdown.append({"label": f"frazione '{nd['atom']['display']}' (come una divisione)", "pts": val})
                 return pts
             return walk_num(nd)
         if k == "group":
@@ -941,6 +950,10 @@ def evaluate_sequence(tiles):
             parsed_sides.append(parse_side(atoms))
     except ParseError as e:
         return {"ok": False, "message": f"Espressione non valida: {e}"}
+    except Exception:
+        # rete di sicurezza: qualunque altro imprevisto diventa un messaggio
+        # gestibile invece di un errore 500 che blocca il pulsante "Verifica"
+        return {"ok": False, "message": "Espressione non valida."}
 
     errs = []
     for n in parsed_sides:
@@ -1118,7 +1131,10 @@ def api_verify():
 
     pslots = state.get('personal_slots', {}).get(player, [None]*13)
     tiles = resolve_slot_sequence(state.get('dice_pool', []), pslots)
-    result = evaluate_sequence(tiles)
+    try:
+        result = evaluate_sequence(tiles)
+    except Exception:
+        result = {"ok": False, "message": "Espressione non valida."}
     if not result["ok"]:
         state["last_feedback"] = f"❌ {result['message']}"
         save_game(game_id, state)
