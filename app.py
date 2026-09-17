@@ -143,14 +143,14 @@ button:active { transform:translateY(1px); }
 .scoreboard-grid { display:grid; grid-template-columns: repeat(6, 1fr); gap:6px; }
 .scoreboard .player { padding:6px 8px; border-radius:6px; background:#fafafa; display:flex; justify-content:space-between; align-items:center; }
 .dice-pool, .slots { display:flex; flex-wrap:nowrap; flex-direction:row; overflow-x:auto; gap:6px; padding:10px; background:var(--box); border-radius:12px; box-shadow:0 6px 18px rgba(0,0,0,0.06); }
-.slot { width:38px; height:38px; min-width:38px; border-radius:8px; background:#dfe6e9; display:flex; align-items:center; justify-content:center; border:2px dashed #636e72; }
-.die { width:38px; height:38px; min-width:38px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700; cursor:pointer; box-shadow:0 4px 8px rgba(0,0,0,0.08); border:2px solid transparent; }
+.slot { width:46px; height:46px; min-width:46px; border-radius:9px; background:#dfe6e9; display:flex; align-items:center; justify-content:center; border:2px dashed #636e72; }
+.die { width:46px; height:46px; min-width:46px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; cursor:pointer; box-shadow:0 4px 8px rgba(0,0,0,0.08); border:2px solid transparent; }
 .die.digit, .die.decsym { background:#BFDDEA; color:#0E3B52; border-color:#7fb3d5; }
-.die.fracnum { background:#BFDDEA; color:#0E3B52; border-color:#7fb3d5; font-size:10px; }
-.die.addsub { background:#F6CE8E; color:#5A3A10; border-color:#d99a3d; font-size:18px; }
-.die.muldiv { background:#E2432B; color:#fff; border-color:#a8281a; font-size:18px; }
-.die.advop { background:#8B6BC9; color:#fff; border-color:#5f4696; font-size:14px; }
-.die.paren, .die.equals { background:#BFE0B8; color:#1F3A1C; border-color:#7fae77; font-size:15px; }
+.die.fracnum { background:#BFDDEA; color:#0E3B52; border-color:#7fb3d5; font-size:12px; }
+.die.addsub { background:#F6CE8E; color:#5A3A10; border-color:#d99a3d; font-size:22px; }
+.die.muldiv { background:#E2432B; color:#fff; border-color:#a8281a; font-size:22px; }
+.die.advop { background:#8B6BC9; color:#fff; border-color:#5f4696; font-size:17px; }
+.die.paren, .die.equals { background:#BFE0B8; color:#1F3A1C; border-color:#7fae77; font-size:18px; }
 .die.slot-empty { background:transparent; border:none; box-shadow:none; cursor:default; }
 .slot.filled { border-style:solid; border-color:var(--accent); background:#e6f3ff; }
 .feedback { margin-top:14px; min-height:26px; font-size:18px; font-weight:600; display:flex; align-items:center; justify-content:center; }
