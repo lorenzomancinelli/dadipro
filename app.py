@@ -278,11 +278,12 @@ const timerSel = document.getElementById('timer-select');
 const timerDisp = document.getElementById('timer-display');
 const victorySel = document.getElementById('victory-select');
 
-// --- Slot personali (13) ---
-function ensureSlots() {
-  if (slotsDiv.children.length === 13) return;
+// --- Slot personali (numero dinamico: tessere del round + 3 di riserva) ---
+function ensureSlots(count) {
+  count = count || 13;
+  if (slotsDiv.children.length === count) return;
   slotsDiv.innerHTML = '';
-  for (let i = 0; i < 13; i++) {
+  for (let i = 0; i < count; i++) {
     const s = document.createElement('div');
     s.className = 'slot';
     s.dataset.index = i;
@@ -311,10 +312,11 @@ function ensureSlots() {
 }
 
 
-ensureSlots();
+ensureSlots(13);
 
 // --- Render stato ---
 async function renderState(state) {
+  ensureSlots((state.my_slots && state.my_slots.length) || state.slot_count || 13);
   // aggiorna dropdown (server authoritative)
   if (state && typeof state.victory_score === 'number') {
     victorySel.value = String(state.victory_score);
@@ -673,6 +675,14 @@ FREE_CLOSEPAREN_PREFIX = "free_cp_"
 def is_free_ref(ref):
     return isinstance(ref, str) and (ref.startswith(FREE_EQUALS_PREFIX) or ref.startswith(FREE_CLOSEPAREN_PREFIX))
 
+SLOT_BUFFER = 3  # slot extra oltre alle tessere pescate: spazio per l'uguale e le due parentesi
+
+def compute_slot_count(dice_pool):
+    """Almeno una casella per ogni tessera pescata dal sacchetto, piu' 3 di
+    riserva per l'uguale e le due parentesi (sempre disponibili, non contate
+    nel sacchetto)."""
+    return max(13, len(dice_pool or []) + SLOT_BUFFER)
+
 def resolve_one(ref, by_id):
     if ref.startswith(FREE_EQUALS_PREFIX):
         return {"cat":"equals", "display":"="}
@@ -996,8 +1006,9 @@ def api_state():
             elapsed = (now_utc - started).total_seconds()
             if elapsed >= state["timer"]:
                 state["dice_pool"] = roll_full_set()
+                state["slot_count"] = compute_slot_count(state["dice_pool"])
                 for p in state.get('players', []):
-                    state.setdefault('personal_slots', {})[p] = [None]*13
+                    state.setdefault('personal_slots', {})[p] = [None]*state["slot_count"]
                 state['round_started_at'] = now_utc.isoformat()
                 state['already_verified'] = []
                 state['last_feedback'] = "⏰ Tempo scaduto! Nuovi dadi generati."
@@ -1006,12 +1017,13 @@ def api_state():
     # ordina i giocatori per punteggio (top first)
     state['players'] = sorted(state.get('players', []), key=lambda p: state['scores'].get(p, 0), reverse=True)
 
-    # garantisci 13 slot per ciascun player
+    # garantisci abbastanza slot per ciascun player
+    slot_count = state.get('slot_count', compute_slot_count(state.get('dice_pool')))
     for p in state.get('players', []):
-        state.setdefault('personal_slots', {}).setdefault(p, [None]*13)
+        state.setdefault('personal_slots', {}).setdefault(p, [None]*slot_count)
 
     view = dict(state)
-    view['my_slots'] = state.get('personal_slots', {}).get(player, [None]*13) if player else [None]*13
+    view['my_slots'] = state.get('personal_slots', {}).get(player, [None]*slot_count) if player else [None]*slot_count
     return jsonify(view)
 
 @app.post("/api/add_player")
@@ -1025,8 +1037,9 @@ def api_add_player():
     if name not in state.get("players", []):
         state.setdefault("players", []).append(name)
         state.setdefault("scores", {})[name] = state.get("scores", {}).get(name, 0)
-        state.setdefault('personal_slots', {})[name] = [None]*13
-        state.setdefault('slots_by_player', {})[name] = [None]*13  # back-compat
+        slot_count = state.get('slot_count', compute_slot_count(state.get('dice_pool')))
+        state.setdefault('personal_slots', {})[name] = [None]*slot_count
+        state.setdefault('slots_by_player', {})[name] = [None]*slot_count  # back-compat
         save_game(game_id, state)
     return jsonify(state)
 
@@ -1035,8 +1048,9 @@ def api_roll():
     game_id = request.args.get("game_id", "default")
     state = load_game(game_id)
     state["dice_pool"] = roll_full_set()
+    state["slot_count"] = compute_slot_count(state["dice_pool"])
     for p in state.get('players', []):
-        state.setdefault('personal_slots', {})[p] = [None]*13
+        state.setdefault('personal_slots', {})[p] = [None]*state["slot_count"]
     state['round_started_at'] = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat()
     state['already_verified'] = []
     state['last_feedback'] = "Nuovi dadi generati"
@@ -1060,7 +1074,7 @@ def api_place():
     if player not in state.get('players', []):
         return jsonify({"error": "Player non registrato"}), 400
 
-    pslots = state.setdefault('personal_slots', {}).setdefault(player, [None]*13)
+    pslots = state.setdefault('personal_slots', {}).setdefault(player, [None]*state.get('slot_count', compute_slot_count(state.get('dice_pool'))))
 
     # tessere "sempre disponibili": ogni richiesta ne conia una copia nuova,
     # non si esauriscono mai. die_id speciale in arrivo dal frontend:
@@ -1107,7 +1121,7 @@ def api_remove():
     if not player:
         return jsonify({"error": "player richiesto"}), 400
 
-    pslots = state.setdefault('personal_slots', {}).setdefault(player, [None]*13)
+    pslots = state.setdefault('personal_slots', {}).setdefault(player, [None]*state.get('slot_count', compute_slot_count(state.get('dice_pool'))))
     for i, ref in enumerate(pslots):
         if ref == die_id:
             pslots[i] = None
@@ -1129,7 +1143,7 @@ def api_verify():
     if player in state.get('already_verified', []):
         return jsonify({"ok": False, "message": "Hai già verificato in questo round", "state": state}), 200
 
-    pslots = state.get('personal_slots', {}).get(player, [None]*13)
+    pslots = state.get('personal_slots', {}).get(player, [None]*state.get('slot_count', compute_slot_count(state.get('dice_pool'))))
     tiles = resolve_slot_sequence(state.get('dice_pool', []), pslots)
     try:
         result = evaluate_sequence(tiles)
@@ -1142,7 +1156,7 @@ def api_verify():
 
     points = result["total"]
     state.setdefault('scores', {})[player] = state.get('scores', {}).get(player, 0) + points
-    state.setdefault('personal_slots', {})[player] = [None]*13
+    state.setdefault('personal_slots', {})[player] = [None]*state.get('slot_count', compute_slot_count(state.get('dice_pool')))
     state.setdefault('already_verified', []).append(player)
 
     # vittoria
